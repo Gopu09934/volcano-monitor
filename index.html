@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Volcano Monitor — Live Global Watch</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=IBM+Plex+Mono:wght@400;500;600&family=Archivo:wght@400;500;600;700&display=swap');
+
+  :root{
+    --basalt:#131110;
+    --basalt-2:#1c1917;
+    --ash:#efe9df;
+    --ash-dim:#a89e8f;
+    --lava:#ff5a1f;
+    --lava-dim:#c94a1c;
+    --sulfur:#e8b23a;
+    --steam:#5c6b66;
+    --line: rgba(239,233,223,0.12);
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:
+      radial-gradient(ellipse 900px 500px at 15% -10%, rgba(255,90,31,0.10), transparent 60%),
+      var(--basalt);
+    color:var(--ash);
+    font-family:'Archivo',sans-serif;
+    line-height:1.5;
+  }
+
+  /* ---- top strip: instrument readout ---- */
+  .strip{
+    display:flex;
+    overflow:hidden;
+    white-space:nowrap;
+    border-bottom:1px solid var(--line);
+    background:var(--basalt-2);
+    font-family:'IBM Plex Mono',monospace;
+    font-size:12px;
+    color:var(--ash-dim);
+  }
+  .strip-track{
+    display:flex;
+    animation: scroll 40s linear infinite;
+    padding:7px 0;
+  }
+  .strip-track span{padding:0 28px; border-right:1px solid var(--line);}
+  .strip-track span b{color:var(--sulfur); font-weight:600;}
+  @keyframes scroll{ 0%{transform:translateX(0)} 100%{transform:translateX(-50%)} }
+
+  header{
+    padding:38px 24px 20px;
+    max-width:1180px;
+    margin:0 auto;
+  }
+  .kicker{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:12px;
+    letter-spacing:0.02em;
+    color:var(--lava);
+    margin:0 0 10px;
+  }
+  h1{
+    font-family:'Big Shoulders Display',sans-serif;
+    font-weight:800;
+    font-size:clamp(38px,7vw,72px);
+    line-height:0.92;
+    margin:0 0 14px;
+    letter-spacing:-0.01em;
+  }
+  h1 em{font-style:normal; color:var(--lava);}
+  .sub{
+    max-width:640px;
+    color:var(--ash-dim);
+    font-size:15px;
+  }
+  .status-row{
+    display:flex; gap:22px; flex-wrap:wrap;
+    margin-top:22px;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:13px;
+  }
+  .status-row div{color:var(--ash-dim);}
+  .status-row b{color:var(--ash); display:block; font-size:20px; font-family:'Big Shoulders Display',sans-serif; font-weight:700;}
+  .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--lava);margin-right:6px;
+    box-shadow:0 0 8px var(--lava); animation:pulse 1.6s ease-in-out infinite;}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+  main{max-width:1180px; margin:0 auto; padding:8px 24px 80px;}
+
+  .grid{
+    display:grid;
+    grid-template-columns: 1.5fr 1fr;
+    gap:1px;
+    background:var(--line);
+    border:1px solid var(--line);
+    margin-top:26px;
+  }
+  @media (max-width:860px){ .grid{grid-template-columns:1fr;} }
+
+  .panel{background:var(--basalt); padding:22px;}
+  .panel h2{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:12px;
+    text-transform:uppercase;
+    letter-spacing:0.04em;
+    color:var(--ash-dim);
+    margin:0 0 16px;
+    display:flex; align-items:center; justify-content:space-between;
+  }
+
+  #map{height:420px; border:1px solid var(--line);}
+  .leaflet-container{background:#0e0d0c;}
+
+  .live-badge{
+    display:inline-flex; align-items:center; gap:6px;
+    font-family:'IBM Plex Mono',monospace; font-size:11px; font-weight:600;
+    color:#fff; background:var(--lava); padding:3px 9px; border-radius:2px;
+    letter-spacing:0.04em; vertical-align:middle; margin-left:12px;
+  }
+  .live-badge::before{content:''; width:6px; height:6px; border-radius:50%; background:#fff; animation:pulse 1.4s ease-in-out infinite;}
+
+  .live-panel{grid-column:1/-1;}
+  .live-frame-wrap{
+    position:relative; width:100%; aspect-ratio:16/9; background:#000;
+    border:1px solid var(--line); overflow:hidden;
+  }
+  .live-frame-wrap img{width:100%; height:100%; object-fit:cover; display:block; filter:contrast(1.05) saturate(1.05);}
+  .live-frame-wrap .rec{
+    position:absolute; top:14px; left:14px; z-index:2;
+    display:flex; align-items:center; gap:6px;
+    background:rgba(19,17,16,0.75); backdrop-filter:blur(2px);
+    padding:5px 10px; font-family:'IBM Plex Mono',monospace; font-size:11px; font-weight:600;
+    color:#fff; letter-spacing:0.05em;
+  }
+  .live-frame-wrap .rec::before{content:''; width:7px; height:7px; border-radius:50%; background:var(--lava); box-shadow:0 0 8px var(--lava); animation:pulse 1.2s ease-in-out infinite;}
+  .live-frame-wrap .cam-tag{
+    position:absolute; bottom:14px; left:14px; z-index:2;
+    font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:#fff;
+    background:rgba(19,17,16,0.6); padding:5px 10px;
+  }
+  .live-frame-wrap .refreshed{
+    position:absolute; bottom:14px; right:14px; z-index:2;
+    font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:var(--ash-dim);
+    background:rgba(19,17,16,0.6); padding:5px 10px;
+  }
+  .live-caption{
+    display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;
+    margin-top:12px; font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:var(--ash-dim);
+  }
+  .live-caption a{color:var(--sulfur); text-decoration:none;}
+  .cam-tabs{display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap;}
+  .cam-tab{
+    font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:var(--ash-dim);
+    background:transparent; border:1px solid var(--line); padding:7px 12px; cursor:pointer;
+  }
+  .cam-tab.active{color:#fff; border-color:var(--lava); background:rgba(255,90,31,0.12);}
+
+  .cam-list{display:flex; flex-direction:column; gap:10px;}
+  .cam{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:14px 16px;
+    border:1px solid var(--line);
+    text-decoration:none; color:var(--ash);
+    transition:border-color .15s ease, background .15s ease;
+  }
+  .cam:hover{border-color:var(--lava-dim); background:rgba(255,90,31,0.05);}
+  .cam-name{font-weight:600; font-size:14.5px;}
+  .cam-loc{font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:var(--ash-dim); margin-top:3px;}
+  .cam-go{font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--lava); white-space:nowrap; margin-left:12px;}
+
+  .log{max-height:420px; overflow-y:auto; display:flex; flex-direction:column;}
+  .log-entry{
+    padding:13px 0;
+    border-bottom:1px solid var(--line);
+  }
+  .log-entry.recent{border-left:3px solid var(--lava); padding-left:12px; background:rgba(255,90,31,0.06);}
+  .log-entry:last-child{border-bottom:none;}
+  .log-title{font-weight:600; font-size:14.5px; margin-bottom:4px;}
+  .log-meta{font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:var(--ash-dim); display:flex; gap:14px; flex-wrap:wrap;}
+  .log-meta a{color:var(--sulfur); text-decoration:none;}
+  .log-empty{color:var(--ash-dim); font-size:13.5px; font-family:'IBM Plex Mono',monospace;}
+  .alert-badge{
+    display:inline-flex; align-items:center; gap:5px; vertical-align:middle; margin-left:8px;
+    background:var(--lava); color:#fff; font-family:'IBM Plex Mono',monospace;
+    font-size:10px; font-weight:700; letter-spacing:0.05em; padding:2px 7px;
+  }
+  .alert-badge::before{content:''; width:5px; height:5px; border-radius:50%; background:#fff; animation:pulse 1s ease-in-out infinite;}
+  @keyframes haloPulse{0%{opacity:0.5;}50%{opacity:0.1;}100%{opacity:0.5;}}
+  .pulse-halo{animation: haloPulse 1.6s ease-in-out infinite;}
+
+  footer{
+    max-width:1180px; margin:0 auto; padding:0 24px 60px;
+    color:var(--ash-dim); font-size:12px; font-family:'IBM Plex Mono',monospace;
+    border-top:1px solid var(--line); padding-top:20px; margin-top:10px;
+  }
+  footer a{color:var(--ash-dim);}
+  .refresh-note{margin-top:6px;}
+
+  ::-webkit-scrollbar{width:8px;}
+  ::-webkit-scrollbar-thumb{background:var(--line);}
+</style>
+</head>
+<body>
+
+<div class="strip"><div class="strip-track" id="strip-track"><span>LOADING FEED…</span></div></div>
+
+<header>
+  <p class="kicker">NASA EONET · PUBLIC DOMAIN DATA</p>
+  <h1>Volcano<br><em>Monitor</em> 24/7 <span class="live-badge">LIVE</span></h1>
+  <p class="sub">Live global eruption &amp; thermal-anomaly tracking, sourced directly from NASA's Earth Observatory Natural Event Tracker, paired with public observatory webcams.</p>
+
+  <div class="status-row">
+    <div><span class="dot"></span><b id="stat-active">—</b>active events</div>
+    <div><b id="stat-alert" style="color:var(--lava);">—</b>erupting now (48h)</div>
+    <div><b id="stat-updated">—</b>last sync (UTC)</div>
+  </div>
+</header>
+
+<main>
+  <div class="grid">
+    <div class="panel">
+      <h2>Global activity map</h2>
+      <div id="map"></div>
+    </div>
+    <div class="panel">
+      <h2>Field log — active volcano events</h2>
+      <div class="log" id="log-list"><div class="log-empty">Fetching NASA EONET…</div></div>
+    </div>
+  </div>
+
+  <div class="grid" style="margin-top:1px;">
+    <div class="panel live-panel">
+      <h2>Live now <span class="live-badge">LIVE</span></h2>
+      <div class="live-frame-wrap">
+        <div class="rec">LIVE</div>
+        <div class="cam-tag">Kīlauea · V1cam · west Halema'uma'u rim</div>
+        <div class="refreshed" id="cam-refreshed">syncing…</div>
+        <img id="live-cam-img" src="" alt="Live view of Kīlauea summit from USGS V1cam" onerror="camOffline()">
+      </div>
+      <div class="live-caption">
+        <span>USGS Hawaiian Volcano Observatory · image auto-refreshes every 15s · public domain</span>
+        <a href="https://url.usgs.gov/v1cam" target="_blank" rel="noopener">watch the full YouTube livestream ↗</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid" style="margin-top:1px;">
+    <div class="panel" style="grid-column:1/-1;">
+      <h2>Public observatory webcams — direct links</h2>
+      <div class="cam-list" id="cam-list"></div>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div>Event data: NASA EONET (Earth Observatory Natural Event Tracker), public domain — eonet.gsfc.nasa.gov</div>
+  <div class="refresh-note">Dashboard auto-refreshes every 5 minutes. Webcam links route to official USGS HVO / INGV / Icelandic Met Office live pages.</div>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+  // ---------- Public observatory webcams (link out — most volcano observatories don't allow hotlink/iframe embedding) ----------
+  const CAMS = [
+    { name:"Kīlauea — V1cam, Halema'uma'u crater (west rim)", loc:"Hawai'i, USA · USGS HVO", url:"https://url.usgs.gov/v1cam" },
+    { name:"Kīlauea — V2cam, Halema'uma'u crater (east rim)", loc:"Hawai'i, USA · USGS HVO", url:"https://url.usgs.gov/v2cam" },
+    { name:"Kīlauea — summit webcams overview", loc:"Hawai'i, USA · USGS HVO", url:"https://www.usgs.gov/volcanoes/kilauea/summit-webcams" },
+    { name:"Etna — INGV volcano webcams", loc:"Sicily, Italy · INGV Osservatorio Etneo", url:"https://www.ct.ingv.it/index.php/monitoraggio-e-sorveglianza/prodotti-del-monitoraggio/telecamere" },
+    { name:"Fagradalsfjall / Reykjanes webcams", loc:"Iceland · Icelandic Met Office", url:"https://www.vedur.is/um-vi/frettir/vefmyndavelar" },
+    { name:"Mount St. Helens — VolcanoCam", loc:"Washington, USA · USGS CVO", url:"https://www.usgs.gov/volcanoes/mount-st-helens/mount-st-helens-volcanocam" },
+  ];
+  const camList = document.getElementById('cam-list');
+  CAMS.forEach(c=>{
+    const a = document.createElement('a');
+    a.href = c.url; a.target = "_blank"; a.rel="noopener"; a.className="cam";
+    a.innerHTML = `<div><div class="cam-name">${c.name}</div><div class="cam-loc">${c.loc}</div></div><div class="cam-go">WATCH →</div>`;
+    camList.appendChild(a);
+  });
+
+  // ---------- Map ----------
+  const map = L.map('map', {scrollWheelZoom:false}).setView([20,0], 2);
+  // Esri's World Dark Gray basemap — free, no API key required (unlike CARTO's
+  // anonymous dark tiles, which now require a registered key).
+  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+    attribution:'Tiles &copy; Esri &mdash; Esri, HERE, Garmin, © OpenStreetMap contributors',
+    maxZoom:16
+  }).addTo(map);
+
+  const RECENT_HOURS = 48;
+  function isRecent(e){
+    const geo = e.geometry?.[e.geometry.length-1];
+    if(!geo?.date) return false;
+    const hrsAgo = (Date.now() - new Date(geo.date).getTime()) / 36e5;
+    return hrsAgo >= 0 && hrsAgo <= RECENT_HOURS;
+  }
+
+  async function loadEonet(){
+    try{
+      const res = await fetch('https://eonet.gsfc.nasa.gov/api/v3/events?category=volcanoes&status=open&limit=100');
+      const data = await res.json();
+      // Recently-flagged events surface first.
+      const events = (data.events || []).slice().sort((a,b)=>{
+        const ra = isRecent(a), rb = isRecent(b);
+        if(ra !== rb) return ra ? -1 : 1;
+        const da = a.geometry?.[a.geometry.length-1]?.date || '';
+        const db = b.geometry?.[b.geometry.length-1]?.date || '';
+        return db.localeCompare(da);
+      });
+      const recentCount = events.filter(isRecent).length;
+
+      document.getElementById('stat-active').textContent = events.length;
+      document.getElementById('stat-alert').textContent = recentCount;
+      document.getElementById('stat-updated').textContent = new Date().toISOString().slice(0,16).replace('T',' ');
+
+      // strip ticker
+      const track = document.getElementById('strip-track');
+      const items = events.slice(0,15).map(e=>{
+        const d = e.geometry?.[e.geometry.length-1]?.date?.slice(0,10) || '';
+        const tag = isRecent(e) ? '🔴 ERUPTING NOW · ' : '';
+        return `<span><b>${tag}${e.title.replace(' Volcano','')}</b> · flagged ${d}</span>`;
+      });
+      track.innerHTML = (items.concat(items)).join('') || '<span>No active NASA EONET volcano flags right now</span>';
+
+      // log list
+      const log = document.getElementById('log-list');
+      log.innerHTML = '';
+      if(events.length === 0){
+        log.innerHTML = '<div class="log-empty">No open volcano events currently flagged by EONET.</div>';
+      }
+      events.forEach(e=>{
+        const geo = e.geometry?.[e.geometry.length-1];
+        const date = geo?.date ? new Date(geo.date).toISOString().slice(0,16).replace('T',' ') : 'n/a';
+        const coords = geo?.coordinates ? `${geo.coordinates[1].toFixed(2)}, ${geo.coordinates[0].toFixed(2)}` : 'n/a';
+        const src = e.sources?.[0];
+        const recent = isRecent(e);
+        const div = document.createElement('div');
+        div.className = 'log-entry' + (recent ? ' recent' : '');
+        div.innerHTML = `
+          <div class="log-title">${e.title}${recent ? '<span class="alert-badge">ERUPTING NOW</span>':''}</div>
+          <div class="log-meta">
+            <span>${date} UTC</span>
+            <span>${coords}</span>
+            ${src ? `<a href="${src.url}" target="_blank" rel="noopener">source: ${src.id}</a>` : ''}
+          </div>`;
+        log.appendChild(div);
+
+        if(geo?.coordinates){
+          const pos = [geo.coordinates[1], geo.coordinates[0]];
+          if(recent){
+            L.circleMarker(pos, {
+              radius:16, color:'transparent', fillColor:'#ff5a1f', fillOpacity:0.35,
+              weight:0, className:'pulse-halo', interactive:false
+            }).addTo(map);
+          }
+          const marker = L.circleMarker(pos, {
+            radius: recent ? 9 : 5,
+            color: recent ? '#ff5a1f' : '#e8b23a',
+            fillColor: recent ? '#ff5a1f' : '#e8b23a',
+            fillOpacity: recent ? 0.85 : 0.5,
+            weight: recent ? 1.5 : 1
+          }).addTo(map);
+          marker.bindPopup(`<b>${e.title}</b>${recent ? ' 🔴 erupting now' : ''}<br>${date} UTC`);
+        }
+      });
+    }catch(err){
+      document.getElementById('log-list').innerHTML =
+        '<div class="log-empty">Could not reach NASA EONET right now. It will retry automatically.</div>';
+      console.error(err);
+    }
+  }
+
+  loadEonet();
+  setInterval(loadEonet, 5 * 60 * 1000);
+
+  // ---------- Live hero cam ----------
+  // USGS HVO publishes a continuously-updated JPG snapshot for each webcam
+  // (public domain). Most volcano observatories don't allow their actual
+  // YouTube video ID to be embedded reliably (IDs rotate when a stream is
+  // restarted), so a real, verified, auto-refreshing still image is the
+  // more honest "live" element — with a link to the full YouTube stream.
+  const CAM_IMG_BASE = 'https://volcanoes.usgs.gov/observatories/hvo/cams/V1cam/images/M.jpg';
+  const camImg = document.getElementById('live-cam-img');
+  const camRefreshed = document.getElementById('cam-refreshed');
+
+  function refreshCam(){
+    camImg.src = CAM_IMG_BASE + '?t=' + Date.now();
+    camRefreshed.textContent = 'updated ' + new Date().toLocaleTimeString();
+  }
+  function camOffline(){
+    camRefreshed.textContent = 'cam unreachable — click through to YouTube';
+  }
+  refreshCam();
+  setInterval(refreshCam, 15000);
+</script>
+</body>
+</html>

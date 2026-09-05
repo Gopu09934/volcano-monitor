@@ -1,0 +1,54 @@
+name: Stream Dashboard to YouTube
+
+# READ THIS FIRST — GitHub Actions caveat
+# ----------------------------------------
+# Hosted GitHub Actions runners kill any job after 6 hours (360 min).
+# This workflow restarts itself every 5h50m to approximate "24/7", but
+# each restart causes a stream drop of 30-90 seconds while the new job
+# boots, launches Chromium, and reconnects to YouTube's RTMP ingest.
+# YouTube will show this as the stream briefly going offline, not a
+# clean continuous broadcast.
+#
+# For a TRUE gapless 24/7 stream, run this same ffmpeg+chromium loop on
+# a small always-on VPS (~$5/mo) instead of Actions, and use this repo
+# only to auto-update the NASA data feed. That's the honest recommendation.
+
+on:
+  schedule:
+    - cron: "*/350 * * * *"   # attempt a fresh run ~every 5h50m
+  workflow_dispatch: {}
+
+concurrency:
+  group: "youtube-stream"
+  cancel-in-progress: true
+
+jobs:
+  stream:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355   # stay under the 360-minute hard limit
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ffmpeg + chromium
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg chromium-browser xvfb
+          npm install puppeteer --no-save
+
+      - name: Capture dashboard to a virtual display
+        run: |
+          Xvfb :99 -screen 0 1920x1080x24 &
+          export DISPLAY=:99
+          node capture.js &   # loads index.html in headless Chromium onto :99
+          sleep 5
+
+      - name: Push virtual display to YouTube via RTMP
+        env:
+          YOUTUBE_STREAM_KEY: ${{ secrets.YOUTUBE_STREAM_KEY }}
+        run: |
+          ffmpeg -f x11grab -video_size 1920x1080 -i :99 \
+                 -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 \
+                 -c:v libx264 -preset veryfast -b:v 4500k -maxrate 4500k -bufsize 9000k \
+                 -pix_fmt yuv420p -g 60 -c:a aac -b:a 128k \
+                 -f flv "rtmp://a.rtmp.youtube.com/live2/${YOUTUBE_STREAM_KEY}" \
+                 -t 21000   # ~5h50m safety cutoff, matches the cron interval
