@@ -5,7 +5,7 @@ on:
     branches: [main]
   workflow_dispatch: {}
   schedule:
-    - cron: "0 */6 * * *"   # redeploy every 6h so the page's build timestamp stays fresh
+    #- cron: "0 */6 * * *"   # redeploy every 6h so the page's build timestamp stays fresh
 
 permissions:
   contents: read
