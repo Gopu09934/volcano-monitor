@@ -31,7 +31,15 @@ jobs:
 
       - name: Install ffmpeg + chromium
         run: |
-          sudo apt-get update
+          # apt-get update against GitHub's Ubuntu mirrors occasionally fails
+          # with a stale/inconsistent release file (a transient mirror sync
+          # issue, not something in this repo) — retry a few times before
+          # giving up.
+          for i in 1 2 3 4 5; do
+            sudo apt-get update && break
+            echo "apt-get update failed (attempt $i/5), retrying in 10s…"
+            sleep 10
+          done
           sudo apt-get install -y ffmpeg chromium-browser xvfb
           npm install puppeteer --no-save
 
@@ -39,8 +47,8 @@ jobs:
         run: |
           Xvfb :99 -screen 0 1920x1080x24 &
           export DISPLAY=:99
-          node capture.js &   # loads index.html in headless Chromium onto :99
-          sleep 5
+          node capture.js &   # loads broadcast.html in headless Chromium onto :99
+          sleep 15
 
       - name: Push virtual display to YouTube via RTMP
         env:
