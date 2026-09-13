@@ -25,6 +25,13 @@
 # every hour, not every 5h50m. "0 */6 * * *" (every 6h, on the hour) is
 # the closest clean equivalent and is used here ONLY as a fallback in
 # case the self-chaining trigger below ever fails to fire.
+#
+# THREE LAYERS OF RESTART:
+# 1. Scheduled self-restart ~6 min before the ffmpeg cutoff (normal case).
+# 2. Failure-triggered restart if any step in THIS run crashes (final step).
+# 3. stream-watchdog.yml polls every 5 min as a catch-all in case 1 and 2
+#    both somehow fail to fire (e.g. the runner is killed outright before
+#    any step can run curl).
 
 name: Stream Dashboard to YouTube
 
@@ -101,3 +108,17 @@ jobs:
                  -pix_fmt yuv420p -g 60 -c:a aac -b:a 128k \
                  -f flv "rtmp://a.rtmp.youtube.com/live2/${YOUTUBE_STREAM_KEY}" \
                  -t 21000   # ~5h50m, leaves buffer under the 355min job timeout
+
+      - name: Restart immediately if any prior step failed
+        if: failure()
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          # Runs only when checkout, apt install, capture, or ffmpeg above
+          # failed/crashed. Fires the restart right away instead of waiting
+          # for stream-watchdog.yml's next 5-minute poll to notice the gap.
+          curl -s -X POST \
+            -H "Authorization: token ${GH_PAT}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/dispatches" \
+            -d '{"event_type":"restart-stream"}'
