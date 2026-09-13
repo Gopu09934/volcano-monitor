@@ -17,6 +17,11 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
+      - name: Debug token presence
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: echo "Token length: ${#GH_TOKEN}"
+
       - name: Ensure Stream is running
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
