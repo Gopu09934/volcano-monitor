@@ -1,26 +1,48 @@
-name: Stream Dashboard to YouTube
-
 # READ THIS FIRST — GitHub Actions caveat
 # ----------------------------------------
 # Hosted GitHub Actions runners kill any job after 6 hours (360 min).
-# This workflow restarts itself every 5h50m to approximate "24/7", but
-# each restart causes a stream drop of 30-90 seconds while the new job
-# boots, launches Chromium, and reconnects to YouTube's RTMP ingest.
-# YouTube will show this as the stream briefly going offline, not a
-# clean continuous broadcast.
+# This workflow restarts itself by triggering a fresh run ~6 min before
+# its own ffmpeg cutoff, so the next job is already booting (checkout,
+# apt install, chromium launch) while the current stream is still live.
+# Even so, expect a real ~30-90s gap on YouTube's end while the new job
+# connects to RTMP ingest — this is NOT a clean continuous broadcast.
 #
 # For a TRUE gapless 24/7 stream, run this same ffmpeg+chromium loop on
 # a small always-on VPS (~$5/mo) instead of Actions, and use this repo
 # only to auto-update the NASA data feed. That's the honest recommendation.
+#
+# SETUP REQUIRED:
+# 1. Create a GitHub Personal Access Token (classic, "repo" scope, or a
+#    fine-grained token with "Actions: read and write" on this repo).
+#    Default GITHUB_TOKEN is deliberately blocked from triggering new
+#    workflow runs (anti-recursion protection), so a PAT is mandatory.
+# 2. Save it as a repo secret named GH_PAT.
+# 3. Save your YouTube stream key as YOUTUBE_STREAM_KEY.
+#
+# NOTE ON THE CRON BELOW:
+# Cron cannot express "every 5h50m" — the minutes field wraps at 60, so
+# */350 (from the original draft) silently evaluates as minute 0, i.e.
+# every hour, not every 5h50m. "0 */6 * * *" (every 6h, on the hour) is
+# the closest clean equivalent and is used here ONLY as a fallback in
+# case the self-chaining trigger below ever fails to fire.
+
+name: Stream Dashboard to YouTube
 
 on:
   schedule:
-    - cron: "*/350 * * * *"   # attempt a fresh run ~every 5h50m
-  workflow_dispatch: {}
+    - cron: "0 */6 * * *"   # safety-net fallback only, see note above
+  workflow_dispatch:
+    inputs:
+      auto_restart:
+        description: "Set to true when triggered by the watchdog (informational only, no behavior change yet)"
+        required: false
+        default: "false"
+  repository_dispatch:
+    types: [restart-stream] # fired by the job itself, see final step
 
 concurrency:
   group: "youtube-stream"
-  cancel-in-progress: true
+  cancel-in-progress: false   # queue, don't kill an active stream
 
 jobs:
   stream:
@@ -50,6 +72,25 @@ jobs:
           node capture.js &   # loads broadcast.html in headless Chromium onto :99
           sleep 15
 
+      - name: Schedule self-restart before this run's ffmpeg cutoff
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          # Fires ~6 minutes before ffmpeg below stops, so the *next* job
+          # is already checking out code / installing deps / launching
+          # chromium while this stream is still on air. Backgrounded so
+          # it doesn't block the ffmpeg step that follows.
+          FFMPEG_DURATION=21000   # seconds, matches -t below (~5h50m)
+          RESTART_LEAD=360        # seconds of head start for the next job
+          (
+            sleep $((FFMPEG_DURATION - RESTART_LEAD))
+            curl -s -X POST \
+              -H "Authorization: token ${GH_PAT}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/dispatches" \
+              -d '{"event_type":"restart-stream"}'   # picked up by stream-to-youtube.yml's own repository_dispatch trigger
+          ) &
+
       - name: Push virtual display to YouTube via RTMP
         env:
           YOUTUBE_STREAM_KEY: ${{ secrets.YOUTUBE_STREAM_KEY }}
@@ -59,4 +100,4 @@ jobs:
                  -c:v libx264 -preset veryfast -b:v 4500k -maxrate 4500k -bufsize 9000k \
                  -pix_fmt yuv420p -g 60 -c:a aac -b:a 128k \
                  -f flv "rtmp://a.rtmp.youtube.com/live2/${YOUTUBE_STREAM_KEY}" \
-                 -t 21000   # ~5h50m safety cutoff, matches the cron interval
+                 -t 21000   # ~5h50m, leaves buffer under the 355min job timeout
