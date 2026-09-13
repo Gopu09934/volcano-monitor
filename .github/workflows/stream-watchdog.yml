@@ -1,9 +1,3 @@
-# SETUP REQUIRED: uses the same GH_PAT secret as stream.yml's self-restart
-# step. secrets.GITHUB_TOKEN is deliberately blocked by GitHub from
-# triggering new workflow runs (anti-recursion protection) — `gh workflow
-# run` with GITHUB_TOKEN will fail or no-op silently, so this must use a
-# PAT with "repo" scope (classic) or "Actions: read and write" (fine-grained).
-
 name: Stream Watchdog
 on:
   schedule:
@@ -17,14 +11,9 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - name: Debug token presence
-        env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
-        run: echo "Token length: ${#GH_TOKEN}"
-
       - name: Ensure Stream is running
         env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           active=$(gh run list --workflow=stream-to-youtube.yml --status=in_progress --json databaseId --jq 'length' --repo "${{ github.repository }}")
           queued=$(gh run list --workflow=stream-to-youtube.yml --status=queued --json databaseId --jq 'length' --repo "${{ github.repository }}")
@@ -34,7 +23,7 @@ jobs:
 
           if [ "$active" -eq 0 ] && [ "$queued" -eq 0 ]; then
             echo "No Stream run active or queued — starting one now."
-            gh workflow run stream-to-youtube.yml --repo "${{ github.repository }}" --ref main -f auto_restart=true
+            gh workflow run stream.yml --repo "${{ github.repository }}" --ref main -f auto_restart=true
           else
             echo "Stream is already running or queued — nothing to do."
           fi
